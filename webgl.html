@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body, #glDom {
+            width: 100%;
+            height: 100%;
+        }
+
+        #glDom {
+            position: fixed;
+        }
+        #fpsDom {
+            position:fixed;
+            top:10px;
+            right:10px;
+            color:white;
+        }
+    </style>
+    <script src="cuon-matrix.js"></script>
+    <script src="models.js"></script>
+    <script src="glsl.js"></script>
+</head>
+<body>
+    <canvas id="glDom"></canvas>
+    <div id="fpsDom">0</div>
+    <script>
+        WebGLRenderingContext.prototype.loadModelInBuffer = function (vertexes, indexes) {
+            var vid = this.createBuffer();
+            this.bindBuffer(this.ARRAY_BUFFER, vid);
+            this.bufferData(this.ARRAY_BUFFER, new Float32Array(vertexes), this.STATIC_DRAW);
+            var pos = this.getAttribLocation(this.pro, 'aPos');
+            this.vertexAttribPointer(pos, 3, this.FLOAT, false, 4 * 6, 0);
+            this.enableVertexAttribArray(pos);
+
+            var nor = this.getAttribLocation(this.pro, "aNor");
+            this.vertexAttribPointer(nor, 3, this.FLOAT, false, 4 * 6, 4 * 3);
+            this.enableVertexAttribArray(nor);
+
+            var iid = this.createBuffer();
+            this.bindBuffer(this.ELEMENT_ARRAY_BUFFER, iid);
+            this.bufferData(this.ELEMENT_ARRAY_BUFFER, new Uint8Array(indexes), this.STATIC_DRAW);
+
+            var gl = this;
+
+            
+            
+            return iid;
+        }
+        WebGLRenderingContext.prototype.initShader = function (vcode, fcode) {
+            var vshader = this.createShader(this.VERTEX_SHADER);
+            this.shaderSource(vshader, vcode);
+            this.compileShader(vshader);
+            var error = this.getShaderInfoLog(vshader);
+            var fshader = this.createShader(this.FRAGMENT_SHADER);
+            this.shaderSource(fshader, fcode);
+            this.compileShader(fshader);
+            error = this.getShaderInfoLog(fshader);
+            var pro = this.createProgram();
+            this.attachShader(pro, vshader);
+            this.attachShader(pro, fshader);
+            this.linkProgram(pro);
+            error = this.getProgramInfoLog(pro);
+            this.useProgram(pro);
+            this.pro = pro;
+            return pro;
+        }
+    </script>
+    <script>
+        document.querySelector("#glDom").keyStatus = {};
+        document.addEventListener("mousedown", function (e) {
+            document.querySelector("#glDom").mousedownPos = { x: e.clientX, y: e.clientY };
+        });
+
+        document.addEventListener("mousemove", function (e) {
+            if (!document.querySelector("#glDom").mousedownPos) return;
+
+            var ox = e.clientX - document.querySelector("#glDom").mousedownPos.x;
+            var oy = e.clientY - document.querySelector("#glDom").mousedownPos.y;
+
+            cameraPos.ry -= ox;
+            cameraPos.rx += oy;
+
+            cameraPos.ry = cameraPos.ry % 360;
+            cameraPos.rx = cameraPos.rx % 360;
+
+            document.querySelector("#glDom").mousedownPos = { x: e.clientX, y: e.clientY };
+
+
+        });
+
+        document.addEventListener("mouseup", function (e) {
+            document.querySelector("#glDom").mousedownPos = null;
+        });
+        document.addEventListener("wheel", function (e) {
+            
+            cameraPos.far += (e.wheelDeltaY < 0 ? 1 : -1);
+            
+        });
+
+        document.addEventListener("keydown", function (e) {
+            document.querySelector("#glDom").keyStatus[e.keyCode] = true;
+        });
+        document.addEventListener("keyup", function (e) {
+            document.querySelector("#glDom").keyStatus[e.keyCode] = false;
+        });
+
+        var cameraPos = {
+            x: 0,
+            y: 0,
+            z: 0,
+            rx: 0,
+            ry: 180,
+            rz: 0,
+
+            far:8
+        };
+
+        var gl = document.querySelector("#glDom").getContext("webgl");
+        gl.initShader(VertexShaderCode, FragmentShaderCode);
+        var boxid = gl.loadModelInBuffer(Models.box.vertexes, Models.box.indexes);
+        const ext = gl.getExtension('WEBGL_depth_texture');
+        
+
+        var aFrustum = gl.getUniformLocation(gl.pro, "aFrustum");
+        var aFrustumYY = gl.getUniformLocation(gl.pro, "aFrustumYY");
+        var aCamera = gl.getUniformLocation(gl.pro, "aCamera");
+        var aCameraYY = gl.getUniformLocation(gl.pro, "aCameraYY");
+        var aSelf = gl.getUniformLocation(gl.pro, "aSelf");
+        var aColor = gl.getUniformLocation(gl.pro, "aColor");
+        var lSelf = gl.getUniformLocation(gl.pro, "lSelf");
+        var ePos = gl.getUniformLocation(gl.pro, "ePos");
+        var isYY = gl.getUniformLocation(gl.pro, "isYY");
+        var YY = gl.getUniformLocation(gl.pro, "YY");
+
+        var aFrustumM4 = new Matrix4();
+        var aFrustumM4YY = new Matrix4();
+        setFrustum();
+        
+
+        var aCameraM4 = new Matrix4();
+        var aCameraYYM4 = new Matrix4();
+        var aSelfM4 = new Matrix4();
+        var aColorV4 = new Float32Array([1, 0, 0, 1]);
+        var lSelfF1 = 0;
+        var ePosM4 = new Matrix4();
+        var isYYI = 0;
+        gl.uniform4fv(aColor, aColorV4);
+        gl.uniform1f(lSelf, lSelfF1);
+        gl.uniformMatrix4fv(ePos, false, ePosM4.elements);
+
+        //阴影buffer
+        var depBuffer = gl.createFramebuffer();
+        var depTexture = gl.createTexture();
+        const depthTextureSize = 4096;
+        gl.uniform1i(YY, 10);
+        gl.activeTexture(gl.TEXTURE10);
+        gl.bindTexture(gl.TEXTURE_2D, depTexture);
+        gl.texImage2D(
+            gl.TEXTURE_2D,      // target
+            0,                  // mip level
+            gl.DEPTH_COMPONENT, // internal format
+            depthTextureSize,   // width
+            depthTextureSize,   // height
+            0,                  // border
+            gl.DEPTH_COMPONENT, // format
+            gl.UNSIGNED_INT,    // type
+            null);              // data
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, depBuffer);
+        gl.framebufferTexture2D(
+            gl.FRAMEBUFFER,       // target
+            gl.DEPTH_ATTACHMENT,  // attachment point
+            gl.TEXTURE_2D,        // texture target
+            depTexture,         // texture
+            0);                   // mip level
+
+        
+
+        function render(yinying) {
+            if (yinying) {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, depBuffer);
+                //gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                gl.viewport(0, 0, depthTextureSize, depthTextureSize);
+                isYYI = 1;
+                gl.uniform1i(YY, 0);
+            } else {
+                gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+                //gl.bindFramebuffer(gl.FRAMEBUFFER, depBuffer);
+                gl.viewport(0, 0, glWidth, glHeight);
+                isYYI = 0;
+                gl.uniform1i(YY, 10);
+            }
+            gl.uniform1i(isYY, isYYI);
+
+            gl.enable(gl.DEPTH_TEST);
+            gl.enable(gl.CULL_FACE);
+            gl.clearColor(0.6, 0.8, 1.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            var far = cameraPos.rx >= 0 ? cameraPos.far : Math.min((cameraPos.y + 3) / Math.sin(-Math.PI / 180 * cameraPos.rx), cameraPos.far);
+
+            
+
+            gl.uniformMatrix4fv(aFrustumYY, false, aFrustumM4YY.elements);
+            aCameraYYM4.setIdentity().rotate(Math.atan(30 / 100) * 180 / Math.PI, 1, 0, 0).translate(0, -30, -100);//视角矩阵
+            gl.uniformMatrix4fv(aCameraYY, false, aCameraYYM4.elements);//视角
+
+            if (yinying) {
+                gl.uniformMatrix4fv(aFrustum, false, aFrustumM4YY.elements);
+                gl.uniformMatrix4fv(aCamera, false, aCameraYYM4.elements);//视角
+            } else {
+                gl.uniformMatrix4fv(aFrustum, false, aFrustumM4.elements);
+                aCameraM4.setIdentity().translate(0, 0, -far).rotate(cameraPos.rx, 1, 0, 0).rotate(180 - cameraPos.ry, 0, 1, 0).translate(-cameraPos.x, -cameraPos.y - 3, -cameraPos.z);//视角矩阵
+                gl.uniformMatrix4fv(aCamera, false, aCameraM4.elements);//视角
+            }
+            
+
+            ePosM4.setIdentity().translate(cameraPos.x, cameraPos.y+3, cameraPos.z).rotate(cameraPos.ry-180, 0, 1, 0).rotate(-cameraPos.rx, 1, 0, 0).translate(0, 0, far);
+            gl.uniformMatrix4fv(ePos, false, ePosM4.elements);//视角
+
+
+            //for (let i = 0; i < 20; i++) {
+            //    aColorV4 = new Float32Array([0, 0, 1, 1]);
+            //    gl.uniform4fv(aColor, aColorV4);
+            //    aSelfM4.setIdentity().rotate(18 * i, 0, 1, 0).translate(0, 10, 10);//私有变换矩阵
+            //    gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            //    gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            //}
+
+            //for (let i = 0; i < 30; i++) {
+            //    aColorV4 = new Float32Array([1, 1, 0, 1]);
+            //    gl.uniform4fv(aColor, aColorV4);
+            //    aSelfM4.setIdentity().rotate(12 * i, 0, 1, 0).translate(0, 5, 40);//私有变换矩阵
+            //    gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            //    gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            //}
+
+            //for (let i = 0; i < 20; i++) {
+            //    aColorV4 = new Float32Array([0, 1, 0, 1]);
+            //    gl.uniform4fv(aColor, aColorV4);
+            //    aSelfM4.setIdentity().rotate(18*i,0,1,0).translate(0, 0, 20);//私有变换矩阵
+            //    gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            //    gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            //}
+            //for (let i = 0; i < 40; i++) {
+            //    aColorV4 = new Float32Array([0.5, 0, 1, 1]);
+            //    gl.uniform4fv(aColor, aColorV4);
+            //    aSelfM4.setIdentity().rotate(9 * i, 0, 1, 0).translate(0, 3, 30);//私有变换矩阵
+            //    gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            //    gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            //}
+
+            var lastDeg = 0;
+            for (let i = 0; i < 360; i++) {
+                var rgb = getHSV(i,36);
+                aColorV4 = new Float32Array([rgb.r, rgb.g, rgb.b, 1]);
+                gl.uniform4fv(aColor, aColorV4);
+                var r = (i*0.2)+5;
+                long = 3;
+                lastDeg += (180 * long / (Math.PI * r));
+                lastDeg = lastDeg % 360;
+                aSelfM4.setIdentity().rotate(lastDeg, 0, 1, 0).translate(0, -1*i/9+40, r);//私有变换矩阵
+                gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+                gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            }
+            
+
+            
+
+            for (let i = 0; i < 4; i++) {
+                aColorV4 = new Float32Array([1, 0.5, 0.1, 1]);
+                gl.uniform4fv(aColor, aColorV4);
+                aSelfM4.setIdentity().rotate(90 * i, 0, 1, 0).translate(0, 0, 80).scale(80,5,1);//私有变换矩阵
+                gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+                gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            }
+
+            
+            
+
+            aColorV4 = new Float32Array([1, 0, 0, 1]);
+            gl.uniform4fv(aColor, aColorV4);
+            aSelfM4.setIdentity().scale(0.1,10,0.1);//私有变换矩阵
+            gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+
+            aColorV4 = new Float32Array([0.7, 0.7, 0.7, 1]);
+            gl.uniform4fv(aColor, aColorV4);
+            aSelfM4.setIdentity().translate(0, -2, 0).scale(100, 1, 100);//私有变换矩阵
+            gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+
+            gl.uniform1f(lSelf, 0);
+            aColorV4 = new Float32Array([0.9, 0.8, 0, 1]);
+            gl.uniform4fv(aColor, aColorV4);
+            aSelfM4.setIdentity().translate(cameraPos.x, cameraPos.y, cameraPos.z).rotate(cameraPos.ry, 0, 1, 0).scale(0.2,0.5,0.2);//私有变换矩阵
+            gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+            gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+            gl.uniform1f(lSelf, 0);
+
+            if (!yinying) {
+                gl.uniform1f(lSelf, 10);
+                aColorV4 = new Float32Array([1, 1, 1, 1]);
+                gl.uniform4fv(aColor, aColorV4);
+                aSelfM4.setIdentity().translate(0, 30, 100);//私有变换矩阵
+                gl.uniformMatrix4fv(aSelf, false, aSelfM4.elements);//私有变换
+                gl.drawElements(gl.TRIANGLES, Models.box.indexes.length, gl.UNSIGNED_BYTE, 0);
+                gl.uniform1f(lSelf, 0);
+            }
+        }
+        var fpsObj = { lastTime:new Date(), times:0,eventTime:new Date() };
+        function setFps() {
+            fpsObj.times++;
+            var now = new Date();
+            var eventMs = now - fpsObj.eventTime;
+            fpsObj.eventTime = now;
+            var ms = (now - fpsObj.lastTime);
+            if (ms < 1000) { return eventMs; }
+            var fps = parseInt(fpsObj.times / ms*1000);
+            document.querySelector("#fpsDom").innerHTML = fps+" FPS";
+            fpsObj.lastTime = now;
+            fpsObj.times = 0;
+            return eventMs;
+        }
+        function sceneProcess(ms) {
+            var keyw = document.querySelector("#glDom").keyStatus[87];
+            var keys = document.querySelector("#glDom").keyStatus[83];
+            var keya = document.querySelector("#glDom").keyStatus[65];
+            var keyd = document.querySelector("#glDom").keyStatus[68];
+            var keye = document.querySelector("#glDom").keyStatus[69];
+            var keyq = document.querySelector("#glDom").keyStatus[81];
+
+            if (keyw) {
+                cameraPos.z += Math.cos(Math.PI * cameraPos.ry / 180) * ms / 200;
+                cameraPos.x += Math.sin(Math.PI * cameraPos.ry / 180) * ms / 200;
+            }
+            if (keys) {
+                cameraPos.z -= Math.cos(Math.PI * cameraPos.ry / 180) * ms / 200;
+                cameraPos.x -= Math.sin(Math.PI * cameraPos.ry / 180) * ms / 200;
+            }
+            if (keya) {
+                cameraPos.x += Math.cos(Math.PI * cameraPos.ry / 180) * ms / 200;
+                cameraPos.z -= Math.sin(Math.PI * cameraPos.ry / 180) * ms / 200;
+            }
+            if (keyd) {
+                cameraPos.x -= Math.cos(Math.PI * cameraPos.ry / 180) * ms / 200;
+                cameraPos.z += Math.sin(Math.PI * cameraPos.ry / 180) * ms / 200;
+            }
+            if (keye) {
+                cameraPos.y += ms / 200;
+            }
+            if (keyq) {
+                cameraPos.y -= ms / 200;
+            }
+        }
+        var limitFPS = 1;
+        function loop() {
+            requestAnimationFrame(loop);
+            //setTimeout(loop,0);
+            var ms = setFps();
+            //controls.update();
+            sceneProcess(ms);
+            
+            render(true);
+            render();
+        }
+
+        loop();
+
+        var glWidth,glHeight;
+        function setFrustum() {
+            var w = document.querySelector("#glDom").clientWidth;
+            var h = document.querySelector("#glDom").clientHeight;
+            document.querySelector("#glDom").width = w;
+            document.querySelector("#glDom").height = h;
+            var bili = w / h;
+            glWidth = w; glHeight = h;
+            gl.viewport(0, 0, glWidth, glHeight);
+
+            aFrustumM4.setPerspective(45, bili, 0.01, 3000);//.setFrustum(-1 * bili, 1 * bili, -1, 1, 0.001, 10000);
+            aFrustumM4YY.setPerspective(135, bili, 0.01, 3000);//.setFrustum(-1 * bili, 1 * bili, -1, 1, 0.001, 10000);
+            gl.uniformMatrix4fv(aFrustum, false, aFrustumM4.elements);
+        }
+
+        function getHSV(i, count) {
+            i = i % count;
+            var r = 0, g = 0, b = 0;
+            if (i < count / 6) {
+                r = 1;
+                g = i * 6 / count;
+            } else if (i < count / 3) {
+                g = 1;
+                r = 1 - (i - count / 6) * 6 / count;
+            } else if (i < count / 2) {
+                g = 1;
+                b = (i - count / 3) * 6 / count;
+            } else if (i < count * 2 / 3) {
+                b = 1;
+                g = 1 - (i - count / 2) * 6 / count;
+            } else if (i < count * 5 / 6) {
+                b = 1;
+                r = (i - count * 2 / 3) * 6 / count;
+            } else {
+                r = 1;
+                b = 1 - (i - count*5 / 6) * 6 / count;
+            }
+            return { r: r, g: g, b: b };
+        }
+    </script>
+</body>
+</html>
